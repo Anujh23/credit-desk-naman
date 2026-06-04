@@ -3577,27 +3577,34 @@ async function verifyPAN() {
       headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ pan: pan })
     });
-    const data = await res.json();
-    const r = data.response || data;
+    const d = await res.json();
 
-    if (r.success && r.result) {
-      const d = r.result;
+    if (res.ok && d.status === 'VALID') {
+      const addr = d.address || {};
+      const aadhaarCell = d.masked_aadhaar_number
+        ? d.masked_aadhaar_number + (d.aadhaar_linked ? ' <span style="color:#065f46;font-weight:600;">(Linked)</span>' : ' <span style="color:#991b1b;font-weight:600;">(Not Linked)</span>')
+        : '-';
+      const fields = [
+        ['PAN', d.pan || pan],
+        ['Name', d.registered_name || d.name_pan_card || '-'],
+        ['Type', d.type || '-'],
+        ['Date of Birth', d.date_of_birth || '-'],
+        ['Gender', d.gender || '-'],
+        ['Aadhaar', aadhaarCell],
+        ['Email', d.email || '-'],
+        ['Mobile', d.mobile_number || '-'],
+        ['Address', addr.full_address || '-'],
+      ];
       let html = '<div style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">';
       html += '<div style="font-weight:700;color:#065f46;font-size:14px;margin-bottom:10px;"><i class="fa-solid fa-circle-check"></i> PAN Verified</div>';
       html += '<table style="width:100%;font-size:13px;border-collapse:collapse;">';
-      const fields = [
-        ['PAN', d.pan_number || pan],
-        ['Status', d.pan_status || '-'],
-        ['Name', d.user_full_name || d.full_name || '-'],
-        ['Type', d.pan_type || '-'],
-      ];
       fields.forEach(function(f) {
-        html += '<tr><td style="padding:4px 0;color:#475569;font-weight:600;width:120px;">' + f[0] + '</td><td style="padding:4px 0;color:#1e293b;font-weight:700;">' + f[1] + '</td></tr>';
+        html += '<tr><td style="padding:4px 0;color:#475569;font-weight:600;width:120px;vertical-align:top;">' + f[0] + '</td><td style="padding:4px 0;color:#1e293b;font-weight:700;">' + f[1] + '</td></tr>';
       });
       html += '</table></div>';
       resultDiv.innerHTML = html;
     } else {
-      const msg = r.response_message || r.error || data.error || 'Verification failed';
+      const msg = d.message || d.error || 'Verification failed';
       resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"><i class="fa-solid fa-circle-xmark"></i> ' + msg + '</div>';
     }
   } catch(e) {

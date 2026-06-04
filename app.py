@@ -711,27 +711,31 @@ async def api_delete_statement(request: Request, statement_id: int, admin_key: s
 
 # ─── PAN Verification Routes ─────────────────────────────────
 
-PAN_API_URL = os.getenv("PAN_API_URL", "")
-PAN_APP_KEY = os.getenv("PAN_APP_KEY", "")
-PAN_APP_SECRET = os.getenv("PAN_APP_SECRET", "")
+CASHFREE_CLIENT_ID = os.getenv("Client_ID", "").strip()
+CASHFREE_CLIENT_SECRET = os.getenv("Client_Secret", "").strip()
+CASHFREE_PAN_URL = os.getenv(
+    "CASHFREE_PAN_URL",
+    "https://api.cashfree.com/verification/pan/advance",
+).strip()
 
 
 @app.post("/api/verify-pan")
 async def verify_pan(request: Request):
-    """Verify a PAN card using NextBigBox lite API."""
+    """Verify a PAN card using Cashfree PAN Advance (PAN 360) API."""
     data = await request.json()
     pan_number = (data.get("pan") or "").strip().upper()
     if not pan_number or len(pan_number) != 10:
         return JSONResponse(content={"error": "Invalid PAN number. Must be 10 characters."}, status_code=400)
-    if not PAN_API_URL or not PAN_APP_KEY:
-        return JSONResponse(content={"error": "PAN API not configured on server."}, status_code=500)
+    if not CASHFREE_CLIENT_ID or not CASHFREE_CLIENT_SECRET:
+        return JSONResponse(content={"error": "Cashfree credentials not configured on server."}, status_code=500)
+    verification_id = f"pan-{uuid.uuid4().hex[:16]}"
     try:
         resp = requests.post(
-            PAN_API_URL,
-            json={"customer_pan_number": pan_number},
+            CASHFREE_PAN_URL,
+            json={"pan": pan_number, "verification_id": verification_id},
             headers={
-                "app-key": PAN_APP_KEY,
-                "app-secret": PAN_APP_SECRET,
+                "x-client-id": CASHFREE_CLIENT_ID,
+                "x-client-secret": CASHFREE_CLIENT_SECRET,
                 "Content-Type": "application/json",
             },
             timeout=15,

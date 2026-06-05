@@ -3333,7 +3333,7 @@ async function ciSearch() {
     ciResults = data.records;
     const cols = ['Name', 'Mobile', 'Repay_Date', 'Collected_Date', 'PaymentStatus'];
     const labels = { Name: 'Name', Mobile: 'Mobile', Repay_Date: 'Repay Date', Collected_Date: 'Collection Date', PaymentStatus: 'Payment Status' };
-    const statusColors = { EARLY: '#059669', ON_TIME: '#2563eb', GRACE_PERIOD: '#d97706', LATE: '#dc2626', NOT_COLLECTED: '#6b7280', PRECLOSE: '#7c3aed', PART_PAYMENT: '#f59e0b' };
+    const statusColors = { EARLY: '#059669', ON_TIME: '#2563eb', GRACE_PERIOD: '#d97706', LATE: '#dc2626', NOT_COLLECTED: '#6b7280', PRECLOSE: '#7c3aed', SETTLEMENT: '#be185d', PART_PAYMENT: '#f59e0b' };
 
     // Parse date for sorting (YYYY-MM-DD or DD-MM-YYYY)
     function parseRepayDate(d) {
@@ -3434,7 +3434,7 @@ async function fetchBehaviorScore(searchBody) {
     const ps = data.payment_summary;
     if (ps) {
       html += '<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">';
-      const statusColors = { EARLY: '#059669', ON_TIME: '#2563eb', GRACE_PERIOD: '#d97706', LATE: '#dc2626', NOT_COLLECTED: '#6b7280', PRECLOSE: '#7c3aed', PART_PAYMENT: '#f59e0b' };
+      const statusColors = { EARLY: '#059669', ON_TIME: '#2563eb', GRACE_PERIOD: '#d97706', LATE: '#dc2626', NOT_COLLECTED: '#6b7280', PRECLOSE: '#7c3aed', SETTLEMENT: '#be185d', PART_PAYMENT: '#f59e0b' };
       for (const [st, count] of Object.entries(ps)) {
         if (count > 0) {
           const clr = statusColors[st] || '#6b7280';

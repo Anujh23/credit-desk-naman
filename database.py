@@ -785,8 +785,12 @@ def determine_payment_status(collected_date: Optional[datetime], repay_date: Opt
     if status:
         s = status.lower().strip()
 
-        # Preclose / Settlement → done early
-        if 'preclose' in s or s == 'settlement':
+        # Settlement / Settled to Closed → distress close (partial loss)
+        if 'settlement' in s or 'settled to closed' in s:
+            return "SETTLEMENT"
+
+        # Preclose → healthy early close
+        if 'preclose' in s:
             return "PRECLOSE"
 
         # Still in part payment → check if actually fully paid
@@ -794,7 +798,10 @@ def determine_payment_status(collected_date: Optional[datetime], repay_date: Opt
             # If disbursed says Closed, trust it — loan is settled
             if disbursed_status:
                 ds = disbursed_status.lower().strip()
-                if ds == 'closed' or 'preclose' in ds or ds == 'settlement':
+                # Disbursed-level Settlement overrides collection-level Part Payment
+                if 'settlement' in ds or 'settled to closed' in ds:
+                    return "SETTLEMENT"
+                if ds == 'closed' or 'preclose' in ds:
                     pass  # Fall through to date comparison
                 else:
                     # Disbursed also says Part Payment or Disbursed → truly partial
@@ -965,7 +972,7 @@ def calculate_behavior_score(pan: str = None, name: str = None, mobile: str = No
     from datetime import date
 
     # --- 1. Payment Timeliness (0-10) ---
-    status_counts = {'EARLY': 0, 'ON_TIME': 0, 'GRACE_PERIOD': 0, 'LATE': 0, 'NOT_COLLECTED': 0, 'PRECLOSE': 0, 'PART_PAYMENT': 0}
+    status_counts = {'EARLY': 0, 'ON_TIME': 0, 'GRACE_PERIOD': 0, 'LATE': 0, 'NOT_COLLECTED': 0, 'PRECLOSE': 0, 'SETTLEMENT': 0, 'PART_PAYMENT': 0}
     for r in records:
         st = r.get('PaymentStatus', 'NOT_COLLECTED')
         status_counts[st] = status_counts.get(st, 0) + 1
@@ -975,7 +982,7 @@ def calculate_behavior_score(pan: str = None, name: str = None, mobile: str = No
     if collected > 0:
         good = status_counts['EARLY'] + status_counts['ON_TIME'] + status_counts['PRECLOSE']
         ok = status_counts['GRACE_PERIOD']
-        bad = status_counts['LATE']
+        bad = status_counts['LATE'] + status_counts['SETTLEMENT']
         partial = status_counts['PART_PAYMENT']
         timeliness = min(10, round((good * 10 + ok * 6 + bad * 2 + partial * 3) / collected, 1))
     else:

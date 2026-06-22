@@ -841,6 +841,9 @@
       <a class="nav-item" data-page="pan-verify" onclick="showPage('pan-verify', this)">
         <i class="fa-solid fa-id-card"></i> PAN Verification
       </a>
+      <a class="nav-item" data-page="employment-verify" onclick="showPage('employment-verify', this)">
+        <i class="fa-solid fa-briefcase"></i> Employment Verification
+      </a>
       <a class="nav-item" data-page="map" onclick="showPage('map', this)">
         <i class="fa-solid fa-map-location-dot"></i> Serviceable Map
       </a>
@@ -1410,6 +1413,34 @@
           <i class="fa-solid fa-magnifying-glass btn-icon"></i> Verify
         </button>
         <div id="pan-result" style="margin-top:16px; display:none;"></div>
+      </div>
+    </div>
+
+    <!-- ═══════════ PAGE: Employment Verification ═══════════ -->
+    <div class="page" id="page-employment-verify">
+      <div class="page-header"><h2>Employment Verification</h2><p>Verify UAN / EPFO employment details via phone or UAN</p></div>
+      <div class="card" style="max-width:500px;">
+        <div class="card-title"><div class="icon"><i class="fa-solid fa-briefcase"></i></div> Verify Employment</div>
+        <div class="form-group">
+          <label class="fl">Search by</label>
+          <div role="tablist" style="display:flex;background:#f1f5f9;padding:4px;border-radius:10px;margin-top:6px;gap:4px;">
+            <button type="button" role="tab" id="emp-mode-phone-btn" onclick="switchEmpMode('phone')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 12px;border:0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;background:#fff;color:#1e40af;box-shadow:0 1px 2px rgba(15,23,42,0.08);transition:all 0.15s;">
+              <i class="fa-solid fa-mobile-screen"></i>Phone
+            </button>
+            <button type="button" role="tab" id="emp-mode-uan-btn" onclick="switchEmpMode('uan')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 12px;border:0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:#64748b;transition:all 0.15s;">
+              <i class="fa-solid fa-id-badge"></i>UAN
+            </button>
+          </div>
+          <input type="hidden" id="emp-mode" value="phone">
+        </div>
+        <div class="form-group">
+          <label class="fl" id="emp-input-label">Phone Number</label>
+          <input type="text" id="emp-input" class="fi" placeholder="e.g. 9988775566" maxlength="10" inputmode="numeric" />
+        </div>
+        <button class="btn btn-blue" id="emp-verify-btn" onclick="verifyEmployment()" style="width:100%; margin-top:8px;">
+          <i class="fa-solid fa-magnifying-glass btn-icon"></i> Verify
+        </button>
+        <div id="emp-result" style="margin-top:16px; display:none;"></div>
       </div>
     </div>
 
@@ -3710,6 +3741,165 @@ async function verifyPAN() {
 
 document.getElementById('pan-input').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') verifyPAN();
+});
+
+// ═══════════ Employment Verification ═══════════
+function switchEmpMode(mode) {
+  document.getElementById('emp-mode').value = mode;
+  const input = document.getElementById('emp-input');
+  const label = document.getElementById('emp-input-label');
+  const phoneBtn = document.getElementById('emp-mode-phone-btn');
+  const uanBtn = document.getElementById('emp-mode-uan-btn');
+  const activeStyle = 'background:#fff;color:#1e40af;box-shadow:0 1px 2px rgba(15,23,42,0.08);';
+  const inactiveStyle = 'background:transparent;color:#64748b;box-shadow:none;';
+  if (mode === 'phone') {
+    label.textContent = 'Phone Number';
+    input.placeholder = 'e.g. 9988775566';
+    input.maxLength = 10;
+    phoneBtn.style.cssText = phoneBtn.style.cssText.replace(/background:[^;]*;|color:[^;]*;|box-shadow:[^;]*;/g, '') + activeStyle;
+    uanBtn.style.cssText = uanBtn.style.cssText.replace(/background:[^;]*;|color:[^;]*;|box-shadow:[^;]*;/g, '') + inactiveStyle;
+  } else {
+    label.textContent = 'UAN';
+    input.placeholder = 'e.g. 100123456789';
+    input.maxLength = 12;
+    uanBtn.style.cssText = uanBtn.style.cssText.replace(/background:[^;]*;|color:[^;]*;|box-shadow:[^;]*;/g, '') + activeStyle;
+    phoneBtn.style.cssText = phoneBtn.style.cssText.replace(/background:[^;]*;|color:[^;]*;|box-shadow:[^;]*;/g, '') + inactiveStyle;
+  }
+  input.value = '';
+  document.getElementById('emp-result').style.display = 'none';
+}
+
+async function verifyEmployment() {
+  const mode = document.getElementById('emp-mode').value;
+  const val = document.getElementById('emp-input').value.trim();
+  const resultDiv = document.getElementById('emp-result');
+  const btn = document.getElementById('emp-verify-btn');
+
+  const expectedLen = mode === 'phone' ? 10 : 12;
+  if (!val || val.length !== expectedLen || !/^\d+$/.test(val)) {
+    resultDiv.style.display = '';
+    resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;">Enter a valid ' + expectedLen + '-digit ' + (mode === 'phone' ? 'phone number' : 'UAN') + '.</div>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin btn-icon"></i> Verifying...';
+  resultDiv.style.display = '';
+  resultDiv.innerHTML = '<div style="padding:10px;color:#64748b;font-size:13px;">Checking employment details...</div>';
+
+  const body = {};
+  body[mode] = val;
+
+  try {
+    const res = await fetch('/api/verify-employment', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body)
+    });
+    const d = await res.json();
+
+    if (res.ok && (d.status === 'VALID' || d.status === 'SUCCESS' || d.employment_status === 'EMPLOYED')) {
+      const uanRec = (d.uan_details && d.uan_details[0]) || {};
+      const basic = uanRec.basic_details || {};
+      const empDet = uanRec.employment_details || {};
+      const addl = uanRec.additional_details || {};
+      const recent = d.recent_employment_details || {};
+      const recentEmployee = recent.employee_details || {};
+      const recentEmployer = recent.employer_details || {};
+      const pfFilings = recentEmployer.pf_filing_details || [];
+      const isEmployed = recentEmployee.employed === true || (empDet.joining_date && !empDet.exit_date);
+      const fmtINR = function(n) { return '₹' + Number(n).toLocaleString('en-IN'); };
+      const dash = function(v) { return (v === null || v === undefined || v === '') ? '<span style="color:#94a3b8;">—</span>' : v; };
+
+      function section(title) {
+        return '<div style="margin-top:14px;padding-bottom:4px;border-bottom:1px solid #bbf7d0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:#065f46;">' + title + '</div>';
+      }
+      function row(label, value) {
+        return '<tr><td style="padding:5px 0;color:#475569;font-weight:600;width:160px;vertical-align:top;font-size:13px;">' + label + '</td><td style="padding:5px 0;color:#1e293b;font-weight:700;font-size:13px;word-break:break-word;">' + dash(value) + '</td></tr>';
+      }
+
+      let html = '<div style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">';
+      html += '<div style="font-weight:700;color:#065f46;font-size:14px;margin-bottom:6px;"><i class="fa-solid fa-circle-check"></i> Employment Verified</div>';
+
+      html += section('Identity');
+      html += '<table style="width:100%;border-collapse:collapse;margin-top:4px;">';
+      html += row('Name', basic.employee_name);
+      html += row('Date of Birth', basic.dob);
+      html += row('Gender', basic.gender);
+      html += row('PAN (masked)', addl.pan);
+      html += row('Aadhaar', basic.aadhaar_verified === true ? '<span style="color:#065f46;">✓ Verified</span>' + (addl.aadhaar ? ' · ' + addl.aadhaar : '') : (basic.aadhaar_verified === false ? '<span style="color:#991b1b;">✗ Not verified</span>' : null));
+      if (basic.phone) html += row('Phone (EPFO)', basic.phone);
+      if (addl.email) html += row('Email', addl.email);
+      if (addl.relation || addl.relative_name) html += row(addl.relation || 'Relative', addl.relative_name);
+      html += '</table>';
+
+      const hasBank = addl.bank_account || addl.ifsc || addl.bank_address;
+      if (hasBank) {
+        html += section('Bank Details (linked to EPFO)');
+        html += '<table style="width:100%;border-collapse:collapse;margin-top:4px;">';
+        html += row('Account Number', addl.bank_account);
+        html += row('IFSC', addl.ifsc);
+        html += row('Bank Address', addl.bank_address);
+        html += '</table>';
+      } else {
+        html += section('Bank Details');
+        html += '<div style="padding:8px 0;font-size:12px;color:#94a3b8;">No bank account details available from EPFO records.</div>';
+      }
+
+      html += section('Current Employment');
+      html += '<table style="width:100%;border-collapse:collapse;margin-top:4px;">';
+      html += row('Status', isEmployed ? '<span style="color:#065f46;">● Currently Employed</span>' : '<span style="color:#991b1b;">○ Not Employed</span>');
+      html += row('Employer', recentEmployer.establishment_name || empDet.establishment_name);
+      if (recentEmployer.ownership_type) html += row('Ownership', recentEmployer.ownership_type + (recentEmployer.setup_date ? ' · Setup ' + recentEmployer.setup_date : ''));
+      html += row('UAN', uanRec.uan || recentEmployee.uan);
+      html += row('Member ID', empDet.member_id || recentEmployee.member_id);
+      html += row('Establishment ID', empDet.establishment_id || recentEmployer.establishment_id);
+      html += row('Joining Date', empDet.joining_date || recentEmployee.joining_date);
+      html += row('Exit Date', empDet.exit_date || recentEmployee.exit_date);
+      if (recentEmployer.employer_name_match === false && d.input && d.input.employer_name) html += row('Employer Match', '<span style="color:#b45309;">⚠ Employer name mismatch</span>');
+      html += '</table>';
+
+      if (Array.isArray(pfFilings) && pfFilings.length) {
+        const counts = pfFilings.map(p => p.employees_count).filter(n => typeof n === 'number');
+        const latest = counts[0];
+        const maxC = Math.max.apply(null, counts);
+        const drop = maxC > 0 ? Math.round((1 - latest / maxC) * 100) : 0;
+        let warn = '';
+        if (drop >= 50) warn = ' <span style="color:#b45309;font-weight:600;font-size:11px;">⚠ Headcount dropped ' + drop + '% from peak (' + maxC + ' → ' + latest + ')</span>';
+
+        html += section('Employer PF Filings (last ' + pfFilings.length + ' months)' + warn);
+        html += '<table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;">';
+        html += '<tr style="background:#dcfce7;color:#065f46;font-weight:700;"><th style="padding:6px;text-align:left;">Month</th><th style="padding:6px;text-align:right;">PF Amount</th><th style="padding:6px;text-align:right;">Employees</th></tr>';
+        pfFilings.forEach(function(p, i) {
+          // Compare to chronologically previous month (i+1 in this reverse-sorted list)
+          const prev = pfFilings[i + 1];
+          const trend = prev ? (p.employees_count > prev.employees_count ? '↑' : (p.employees_count < prev.employees_count ? '↓' : '')) : '';
+          const trendColor = trend === '↑' ? '#065f46' : (trend === '↓' ? '#b45309' : '#94a3b8');
+          html += '<tr><td style="padding:6px;border-top:1px solid #bbf7d0;font-weight:600;">' + (p.wage_month || '-') + '</td>';
+          html += '<td style="padding:6px;border-top:1px solid #bbf7d0;text-align:right;">' + (p.total_amount ? fmtINR(p.total_amount) : '-') + '</td>';
+          html += '<td style="padding:6px;border-top:1px solid #bbf7d0;text-align:right;">' + (p.employees_count || '-') + ' <span style="color:' + trendColor + ';">' + trend + '</span></td></tr>';
+        });
+        html += '</table>';
+      }
+
+      html += '<details style="margin-top:12px;"><summary style="font-size:11px;color:#475569;cursor:pointer;">Show raw JSON</summary><pre style="font-size:11px;background:#f8fafc;padding:8px;border-radius:6px;max-height:300px;overflow:auto;margin-top:6px;">' + JSON.stringify(d, null, 2) + '</pre></details>';
+      html += '</div>';
+      resultDiv.innerHTML = html;
+    } else {
+      const msg = d.message || d.error || d.status_description || ('Verification failed (status: ' + (d.status || 'unknown') + ')');
+      resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"><i class="fa-solid fa-circle-xmark"></i> ' + msg + '</div>'
+        + '<details style="margin-top:8px;"><summary style="font-size:11px;color:#64748b;cursor:pointer;">Show raw response</summary><pre style="font-size:11px;background:#f8fafc;padding:8px;border-radius:6px;max-height:300px;overflow:auto;">' + JSON.stringify(d, null, 2) + '</pre></details>';
+    }
+  } catch(e) {
+    resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;">Error: ' + e.message + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-magnifying-glass btn-icon"></i> Verify';
+  }
+}
+
+document.getElementById('emp-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') verifyEmployment();
 });
 </script>
 

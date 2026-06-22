@@ -747,6 +747,48 @@ async def verify_pan(request: Request):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+CASHFREE_EMPLOYMENT_URL = "https://api.cashfree.com/verification/advance-employment"
+
+
+@app.post("/api/verify-employment")
+async def verify_employment(request: Request):
+    """Verify employment via Cashfree Advance Employment API (UAN/EPFO). Accepts phone OR uan."""
+    data = await request.json()
+    phone = (data.get("phone") or "").strip()
+    uan = (data.get("uan") or "").strip()
+    track(request, "VERIFY_EMPLOYMENT", f"phone={phone or '-'} uan={uan or '-'}")
+    if not phone and not uan:
+        return JSONResponse(content={"error": "Provide either phone (10 digits) or uan (12 digits)."}, status_code=400)
+    if phone and (len(phone) != 10 or not phone.isdigit()):
+        return JSONResponse(content={"error": "Phone must be 10 digits."}, status_code=400)
+    if uan and (len(uan) != 12 or not uan.isdigit()):
+        return JSONResponse(content={"error": "UAN must be 12 digits."}, status_code=400)
+    if not CASHFREE_CLIENT_ID or not CASHFREE_CLIENT_SECRET:
+        return JSONResponse(content={"error": "Cashfree credentials not configured on server."}, status_code=500)
+    verification_id = f"emp-{uuid.uuid4().hex[:16]}"
+    body = {"verification_id": verification_id}
+    if phone:
+        body["phone"] = phone
+    if uan:
+        body["uan"] = uan
+    try:
+        resp = requests.post(
+            CASHFREE_EMPLOYMENT_URL,
+            json=body,
+            headers={
+                "x-client-id": CASHFREE_CLIENT_ID,
+                "x-client-secret": CASHFREE_CLIENT_SECRET,
+                "Content-Type": "application/json",
+            },
+            timeout=20,
+        )
+        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except requests.exceptions.ConnectionError:
+        return JSONResponse(content={"error": "Cannot connect to Cashfree employment verification service."}, status_code=503)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 @app.on_event("startup")
 async def startup():
     """Initialize database tables and connection pool on app startup."""

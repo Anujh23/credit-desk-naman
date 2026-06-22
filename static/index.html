@@ -1096,6 +1096,8 @@
               <button class="btn btn-green" id="fi-saveBtn" onclick="saveStatement()" style="flex:1; min-width:180px; display:none;"><i class="fa-solid fa-floppy-disk"></i> Save Statement</button>
             </div>
             <div id="fi-fetchResult" style="display:none; margin-top:20px;">
+              <!-- Note about banks excluded from result (failed / non-deposit) -->
+              <div id="fi-skipNote" style="display:none; margin-bottom:12px; padding:10px 14px; background:#f5f5f5; border-left:3px solid #999; border-radius:4px; font-size:12px; color:#666;"></div>
               <!-- Account tabs -->
               <div class="acc-tabs" id="fi-accTabs"></div>
               <!-- Account panels -->
@@ -1814,7 +1816,7 @@ function authHeaders(extra = {}) {
 }
 
 // ── Globals ──
-let AA = { token: '', consentHandle: '', consentId: '', custId: '', sessionId: '', csCurrentStep: 1, fiCurrentStep: 1 };
+let AA = { token: '', consentHandle: '', consentId: '', custId: '', sessionId: '', csCurrentStep: 1, fiCurrentStep: 1, failedAccounts: [], pendingAccounts: [], readyAccounts: [], parentFailed: false };
 let fetchedAccounts = [];
 const fmt = n => '\u20B9' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -2088,9 +2090,52 @@ async function fiStatus() {
       html = '<div class="info-row"><span class="il">All Accounts</span><span class="status-badge ' + cls + '">' + friendly + '</span></div>';
     }
     document.getElementById('fi-statusAccounts').innerHTML = html || '<div class="info-row"><span class="il">Status</span><span>' + (body.status || 'Check log') + '</span></div>';
-    const allReady = (Array.isArray(accounts) && accounts.length && accounts.every(a => (a.status || a.Status) === 'READY')) || overallStatus === 'READY';
-    if (allReady) {
+    // Capture failed + pending accounts for later use in fetch step
+    AA.failedAccounts = (Array.isArray(accounts) ? accounts : []).filter(a => {
+      const s = (a.status || a.Status || '').toUpperCase();
+      return s && s !== 'READY' && s !== 'PENDING' && s !== 'ACTIVE';
+    });
+    AA.pendingAccounts = (Array.isArray(accounts) ? accounts : []).filter(a => {
+      const s = (a.status || a.Status || '').toUpperCase();
+      return s === 'PENDING';
+    });
+    // Capture READY accounts (with linkRefNumber) for per-link fetch fallback
+    AA.readyAccounts = (Array.isArray(accounts) ? accounts : []).filter(a => {
+      const s = (a.status || a.Status || '').toUpperCase();
+      return s === 'READY';
+    }).map(a => ({
+      linkRefNumber: a.linkRefNumber || a.LinkRefNumber || a.linkRefNo || '',
+      fipId: a.fipId || a.FipId || ''
+    })).filter(a => a.linkRefNumber);
+    // Detect parent-level failure
+    const overallUpper = (overallStatus || '').toUpperCase();
+    AA.parentFailed = overallUpper === 'FAILED' || overallUpper === 'ERROR' || overallUpper === 'REJECTED';
+    const hasPending = AA.pendingAccounts.length > 0 || overallUpper === 'PENDING';
+    const hasReady = (Array.isArray(accounts) && accounts.some(a => (a.status || a.Status) === 'READY')) || overallUpper === 'READY';
+    // Unlock fetch button if either:
+    //   (a) normal case: no PENDING && has READY && parent not failed, OR
+    //   (b) per-link fallback: parent failed but we have READY accounts with linkRefNumbers
+    const canFetchNormal = !hasPending && hasReady && !AA.parentFailed;
+    const canFetchPerLink = AA.parentFailed && AA.readyAccounts.length > 0;
+    if (canFetchNormal || canFetchPerLink) {
       document.getElementById('fi-nextStep3').style.display = '';
+    }
+    // Render a note explaining the AA-level failure (different tone for fallback vs hard-fail)
+    const existing = document.getElementById('fi-parentFailNote');
+    if (existing) existing.remove();
+    if (AA.parentFailed) {
+      const note = document.createElement('div');
+      note.id = 'fi-parentFailNote';
+      if (canFetchPerLink) {
+        // Soft note — we'll try per-link fetch
+        note.style.cssText = 'margin-top:12px; padding:12px 14px; background:#fffbeb; border-left:3px solid #f59e0b; border-radius:4px; font-size:13px; color:#78350f;';
+        note.innerHTML = '<i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>Overall AA request marked <b>' + overallUpper + '</b>, but ' + AA.readyAccounts.length + ' account(s) reported READY. Will attempt per-account fetch using linkRefNumber.';
+      } else {
+        // Hard fail — no READY children to salvage
+        note.style.cssText = 'margin-top:12px; padding:12px 14px; background:#fef2f2; border-left:3px solid #dc2626; border-radius:4px; font-size:13px; color:#7f1d1d;';
+        note.innerHTML = '<i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i><b>Data request failed at AA</b> (fiRequestStatus: ' + overallUpper + '). No READY accounts to fetch. Try a new consent, or contact Finsense support with the consent handle.';
+      }
+      document.getElementById('fi-statusResult').appendChild(note);
     }
   } catch (e) {
     alert('Connection error: ' + e.message);
@@ -2101,15 +2146,49 @@ async function fiFetch() {
   const btn = document.getElementById('fi-fetchBtn');
   setLoading(btn, true);
   try {
-    const r = await apiPost('/api/fi-data-fetch', {
-      token: document.getElementById('fi-token').value || AA.token,
-      consentHandle: document.getElementById('fi-consentHandleId').value || AA.consentHandle,
-      sessionId: document.getElementById('fi-statusSessionId').value || AA.sessionId
-    });
+    const token = document.getElementById('fi-token').value || AA.token;
+    const consentHandle = document.getElementById('fi-consentHandleId').value || AA.consentHandle;
+    const sessionId = document.getElementById('fi-statusSessionId').value || AA.sessionId;
+    let r;
+    // Per-link fallback: parent request FAILED but children are READY — fetch each linkRefNumber individually
+    if (AA.parentFailed && AA.readyAccounts && AA.readyAccounts.length > 0) {
+      const successResponses = [];
+      const failedLinks = [];
+      for (const ra of AA.readyAccounts) {
+        const linkR = await apiPost('/api/fi-data-fetch', {
+          token: token,
+          consentHandle: consentHandle,
+          sessionId: sessionId,
+          linkRefNumber: ra.linkRefNumber
+        });
+        if (linkR.ok) successResponses.push(linkR.data);
+        else failedLinks.push({ linkRefNumber: ra.linkRefNumber, fipId: ra.fipId, error: linkR.data });
+      }
+      if (successResponses.length === 0) {
+        // All per-link fetches failed
+        r = { ok: false, data: { error: 'Per-account fallback fetch failed for all ' + AA.readyAccounts.length + ' READY accounts. AA likely discarded data due to parent FAILED.', failedLinks: failedLinks } };
+      } else {
+        // Merge body arrays (Finsense format 1: each body is an array of FIP items)
+        const mergedBody = [];
+        successResponses.forEach(resp => {
+          const b = resp.body || resp;
+          if (Array.isArray(b)) mergedBody.push(...b);
+          else mergedBody.push(b);
+        });
+        r = { ok: true, data: { body: mergedBody, _perLinkFallback: true, _failedCount: failedLinks.length } };
+      }
+    } else {
+      r = await apiPost('/api/fi-data-fetch', {
+        token: token,
+        consentHandle: consentHandle,
+        sessionId: sessionId
+      });
+    }
     if (!r.ok) {
       const errMsg = r.data?.error || r.data?.errors?.[0]?.errorMsg || JSON.stringify(r.data);
       alert('Error fetching data: ' + errMsg);
       document.getElementById('fi-fetchResult').style.display = 'block';
+      document.getElementById('fi-skipNote').style.display = 'none';
       document.getElementById('fi-accTabs').innerHTML = '';
       document.getElementById('fi-accPanels').innerHTML = '<pre style="padding:20px;font-size:12px;max-height:400px;overflow:auto;">' + JSON.stringify(r.data, null, 2) + '</pre>';
       setLoading(btn, false);
@@ -2121,6 +2200,9 @@ async function fiFetch() {
     // Format 1: body is an array with fiObjects (JSON format from Finsense)
     if (Array.isArray(body)) {
       body.forEach(item => {
+        // Filter: only DEPOSIT FI type (skip investments, GSTR, insurance, etc.)
+        const itemFiType = (item.FIType || item.fiType || '').toUpperCase();
+        if (itemFiType && itemFiType !== 'DEPOSIT') return;
         const fiObjects = item.fiObjects || [];
         const fiAccountInfo = item.fiAccountInfo || [];
         fiObjects.forEach((fiObj, idx) => {
@@ -2153,10 +2235,21 @@ async function fiFetch() {
       const fiData = body.fiData || body.FIData || body.data || body.decryptedFI || [];
       if (fiData && (!Array.isArray(fiData) || fiData.length > 0)) {
         const parsed = await apiPost('/api/parse-fi-data', { fiData: Array.isArray(fiData) ? fiData : [fiData] });
-        accounts = parsed.data.accounts || [];
+        // Drop accounts that errored during parse (covers failed/non-parseable banks)
+        accounts = (parsed.data.accounts || []).filter(a => !a.error);
       }
     }
 
+    // Show grey note about banks excluded due to share failure (FAILED status from FI Status step)
+    const failedCount = (AA.failedAccounts || []).length;
+    const skipNote = document.getElementById('fi-skipNote');
+    if (failedCount > 0) {
+      skipNote.style.display = 'block';
+      skipNote.innerHTML = '<i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>' + failedCount + ' bank' + (failedCount > 1 ? 's' : '') + ' could not share data and ' + (failedCount > 1 ? 'have' : 'has') + ' been excluded from this view.';
+    } else {
+      skipNote.style.display = 'none';
+      skipNote.innerHTML = '';
+    }
     if (!accounts.length) {
       document.getElementById('fi-fetchResult').style.display = 'block';
       document.getElementById('fi-accTabs').innerHTML = '';
@@ -3331,8 +3424,8 @@ async function ciSearch() {
     if (!data.records.length) { container.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">No records found</div>'; return; }
 
     ciResults = data.records;
-    const cols = ['Name', 'Mobile', 'Repay_Date', 'Collected_Date', 'PaymentStatus'];
-    const labels = { Name: 'Name', Mobile: 'Mobile', Repay_Date: 'Repay Date', Collected_Date: 'Collection Date', PaymentStatus: 'Payment Status' };
+    const cols = ['Name', 'Mobile', 'Branch', 'Repay_Date', 'Collected_Date', 'PaymentStatus'];
+    const labels = { Name: 'Name', Mobile: 'Mobile', Branch: 'Branch', Repay_Date: 'Repay Date', Collected_Date: 'Collection Date', PaymentStatus: 'Payment Status' };
     const statusColors = { EARLY: '#059669', ON_TIME: '#2563eb', GRACE_PERIOD: '#d97706', LATE: '#dc2626', NOT_COLLECTED: '#6b7280', PRECLOSE: '#7c3aed', SETTLEMENT: '#be185d', PART_PAYMENT: '#f59e0b' };
 
     // Parse date for sorting (YYYY-MM-DD or DD-MM-YYYY)

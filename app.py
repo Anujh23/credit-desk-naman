@@ -9,6 +9,11 @@ import os
 import jwt
 import xml.etree.ElementTree as ET
 import tempfile
+from urllib.parse import quote
+import json
+import hmac
+import hashlib
+import base64
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from scoring import calculate_sanction
@@ -92,10 +97,14 @@ def get_current_user(request: Request) -> str:
 
 
 def track(request: Request, action: str, details: str = None):
-    """Log user activity with IP address."""
-    username = get_current_user(request)
-    ip = request.client.host if request.client else None
-    log_activity(username, action, details, ip)
+    """Log user activity with IP address. Best-effort — logging failures (e.g. a
+    stale DB connection) must never crash the underlying request."""
+    try:
+        username = get_current_user(request)
+        ip = request.client.host if request.client else None
+        log_activity(username, action, details, ip)
+    except Exception as e:
+        print(f"[track] activity logging failed for {action}: {e}")
 
 
 # ─── Auth Routes ─────────────────────────────────────────────
@@ -787,6 +796,373 @@ async def verify_employment(request: Request):
         return JSONResponse(content={"error": "Cannot connect to Cashfree employment verification service."}, status_code=503)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+# ─── Mandate / Subscription Routes (Cashfree Payment Gateway) ─────────────
+# NOTE: Subscriptions are a Payment Gateway product, separate from the Verification
+# suite used above. They can require different API keys. We look for dedicated PG
+# creds first and fall back to the verification creds if none are set.
+CASHFREE_PG_CLIENT_ID = (os.getenv("mandate_id") or os.getenv("CASHFREE_PG_CLIENT_ID") or CASHFREE_CLIENT_ID).strip()
+CASHFREE_PG_CLIENT_SECRET = (os.getenv("mandate_Secret") or os.getenv("CASHFREE_PG_CLIENT_SECRET") or CASHFREE_CLIENT_SECRET).strip()
+CASHFREE_PG_BASE = os.getenv("CASHFREE_PG_BASE", "https://api.cashfree.com/pg").strip().rstrip("/")
+CASHFREE_API_VERSION = os.getenv("CASHFREE_API_VERSION", "2025-01-01").strip()
+CASHFREE_PG_MODE = "sandbox" if "sandbox" in CASHFREE_PG_BASE.lower() else "production"
+
+# Local store of created mandates (Cashfree has no list-all API). NOTE: this file is
+# ephemeral on Render (wiped on redeploy) and holds customer PII — gitignored.
+MANDATES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mandates.json")
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _load_mandates():
+    try:
+        with open(MANDATES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_mandate(record):
+    """Append (or replace by subscription_id) a mandate in the local store. Best-effort."""
+    try:
+        mandates = [m for m in _load_mandates() if m.get("subscription_id") != record.get("subscription_id")]
+        mandates.append(record)
+        with open(MANDATES_FILE, "w", encoding="utf-8") as f:
+            json.dump(mandates, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[mandates] failed to save {record.get('subscription_id')}: {e}")
+
+
+def _pg_headers():
+    return {
+        "x-client-id": CASHFREE_PG_CLIENT_ID,
+        "x-client-secret": CASHFREE_PG_CLIENT_SECRET,
+        "x-api-version": CASHFREE_API_VERSION,
+        "Content-Type": "application/json",
+    }
+
+
+@app.post("/api/create-subscription")
+async def create_subscription(request: Request):
+    """Create an eNACH / UPI Autopay mandate (Cashfree subscription) and notify the
+    customer via Email/SMS to complete authorization."""
+    data = await request.json()
+    name = (data.get("customer_name") or "").strip()
+    email = (data.get("customer_email") or "").strip()
+    phone = (data.get("customer_phone") or "").strip()
+    plan_type = (data.get("plan_type") or "ON_DEMAND").strip().upper()
+
+    if not name or not email or not phone:
+        return JSONResponse(content={"error": "Customer name, email and phone are required."}, status_code=400)
+    if len(phone) != 10 or not phone.isdigit():
+        return JSONResponse(content={"error": "Phone must be 10 digits."}, status_code=400)
+    if "@" not in email:
+        return JSONResponse(content={"error": "Enter a valid email address."}, status_code=400)
+    if not CASHFREE_PG_CLIENT_ID or not CASHFREE_PG_CLIENT_SECRET:
+        return JSONResponse(content={"error": "Cashfree PG credentials not configured on server."}, status_code=500)
+
+    subscription_id = (data.get("subscription_id") or "").strip() or f"SUB-{uuid.uuid4().hex[:12]}"
+
+    # ── Plan details (inline / ad-hoc plan) ──
+    plan_details = {
+        "plan_name": (data.get("plan_name") or "Loan Repayment Mandate").strip(),
+        "plan_type": plan_type,
+        "plan_currency": "INR",
+    }
+    if plan_type == "PERIODIC":
+        try:
+            plan_amount = float(data.get("plan_amount") or 0)
+        except (TypeError, ValueError):
+            plan_amount = 0
+        if plan_amount <= 0:
+            return JSONResponse(content={"error": "Enter a valid amount per cycle for a PERIODIC plan."}, status_code=400)
+        plan_details["plan_amount"] = plan_amount
+        plan_details["plan_interval_type"] = (data.get("plan_interval_type") or "MONTH").strip().upper()
+        plan_details["plan_intervals"] = int(data.get("plan_intervals") or 1)
+        max_cycles = data.get("plan_max_cycles")
+        if max_cycles:
+            plan_details["plan_max_cycles"] = int(max_cycles)
+    else:  # ON_DEMAND
+        try:
+            plan_max_amount = float(data.get("plan_max_amount") or 0)
+        except (TypeError, ValueError):
+            plan_max_amount = 0
+        if plan_max_amount <= 0:
+            return JSONResponse(content={"error": "Enter a valid maximum amount for an ON_DEMAND plan."}, status_code=400)
+        plan_details["plan_max_amount"] = plan_max_amount
+
+    # ── Customer details ──
+    customer_details = {
+        "customer_name": name,
+        "customer_email": email,
+        "customer_phone": phone,
+    }
+    for key in ("customer_bank_account_number", "customer_bank_ifsc", "customer_bank_account_holder_name"):
+        val = (data.get(key) or "").strip()
+        if val:
+            customer_details[key] = val
+    acc_type = (data.get("customer_bank_account_type") or "").strip().upper()
+    if acc_type:
+        customer_details["customer_bank_account_type"] = acc_type
+
+    payment_methods = data.get("payment_methods") or ["enach", "upi"]
+    notification_channel = data.get("notification_channel") or ["EMAIL", "SMS"]
+    try:
+        auth_amount = float(data.get("authorization_amount") or 1)
+    except (TypeError, ValueError):
+        auth_amount = 1
+
+    body = {
+        "subscription_id": subscription_id,
+        "customer_details": customer_details,
+        "plan_details": plan_details,
+        "authorization_details": {
+            "authorization_amount": auth_amount,
+            "authorization_amount_refund": True,
+            "payment_methods": payment_methods,
+        },
+        "subscription_meta": {
+            "return_url": (data.get("return_url") or "").strip() or "https://credit-desk-naman.onrender.com/",
+            "notification_channel": notification_channel,
+        },
+    }
+    for src, dst in (("subscription_expiry_time", "subscription_expiry_time"),
+                     ("subscription_first_charge_time", "subscription_first_charge_time"),
+                     ("subscription_note", "subscription_note")):
+        val = (data.get(src) or "").strip()
+        if val:
+            body[dst] = val
+
+    track(request, "CREATE_MANDATE", f"sub={subscription_id} phone={phone} type={plan_type}")
+    try:
+        resp = requests.post(
+            f"{CASHFREE_PG_BASE}/subscriptions",
+            json=body,
+            headers=_pg_headers(),
+            timeout=20,
+        )
+        out = resp.json()
+        if isinstance(out, dict):
+            out.setdefault("subscription_id", subscription_id)
+            if resp.status_code < 300 and out.get("subscription_status"):
+                _save_mandate({
+                    "subscription_id": out.get("subscription_id", subscription_id),
+                    "cf_subscription_id": out.get("cf_subscription_id"),
+                    "customer_name": name,
+                    "customer_phone": phone,
+                    "customer_email": email,
+                    "plan_max_amount": plan_details.get("plan_max_amount"),
+                    "subscription_session_id": out.get("subscription_session_id"),
+                    "status_at_creation": out.get("subscription_status"),
+                    "created_at": datetime.now(IST).isoformat(),
+                })
+        return JSONResponse(content=out, status_code=resp.status_code)
+    except requests.exceptions.ConnectionError:
+        return JSONResponse(content={"error": "Cannot connect to Cashfree subscription service."}, status_code=503)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.post("/api/subscription-status")
+async def subscription_status(request: Request):
+    """Fetch a mandate (subscription) status by subscription_id from Cashfree."""
+    data = await request.json()
+    subscription_id = (data.get("subscription_id") or "").strip()
+    if not subscription_id:
+        return JSONResponse(content={"error": "Subscription ID is required."}, status_code=400)
+    if not CASHFREE_PG_CLIENT_ID or not CASHFREE_PG_CLIENT_SECRET:
+        return JSONResponse(content={"error": "Cashfree PG credentials not configured on server."}, status_code=500)
+    track(request, "MANDATE_STATUS", f"sub={subscription_id}")
+    try:
+        resp = requests.get(
+            f"{CASHFREE_PG_BASE}/subscriptions/{quote(subscription_id, safe='')}",
+            headers=_pg_headers(),
+            timeout=20,
+        )
+        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except requests.exceptions.ConnectionError:
+        return JSONResponse(content={"error": "Cannot connect to Cashfree subscription service."}, status_code=503)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/list-mandates")
+async def list_mandates(request: Request):
+    """Return all locally-stored mandates, refreshing each one's live status from Cashfree."""
+    track(request, "LIST_MANDATES")
+    stored = _load_mandates()
+    have_creds = bool(CASHFREE_PG_CLIENT_ID and CASHFREE_PG_CLIENT_SECRET)
+    headers = _pg_headers()
+    out = []
+    for m in stored:
+        sid = m.get("subscription_id")
+        rec = {
+            "subscription_id": sid,
+            "cf_subscription_id": m.get("cf_subscription_id"),
+            "customer_name": m.get("customer_name"),
+            "customer_phone": m.get("customer_phone"),
+            "customer_email": m.get("customer_email"),
+            "plan_max_amount": m.get("plan_max_amount"),
+            "created_at": m.get("created_at"),
+            "status": m.get("status_at_creation"),
+            "live": False,
+        }
+        if have_creds and sid:
+            try:
+                r = requests.get(
+                    f"{CASHFREE_PG_BASE}/subscriptions/{quote(sid, safe='')}",
+                    headers=headers, timeout=10,
+                )
+                if r.status_code < 300:
+                    j = r.json()
+                    if isinstance(j, dict) and j.get("subscription_status"):
+                        rec["status"] = j.get("subscription_status")
+                        rec["live"] = True
+                        plan = j.get("plan_details") or {}
+                        if plan.get("plan_max_amount") is not None:
+                            rec["plan_max_amount"] = plan.get("plan_max_amount")
+            except Exception:
+                pass  # keep last-known status
+        out.append(rec)
+    out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return JSONResponse(content={"mandates": out})
+
+
+def _fetch_and_save_mandate(sid):
+    """Fetch a subscription from Cashfree by id and upsert it into the local store.
+    Returns True on success. Used by the webhook to auto-record mandates."""
+    if not (sid and CASHFREE_PG_CLIENT_ID and CASHFREE_PG_CLIENT_SECRET):
+        return False
+    try:
+        r = requests.get(
+            f"{CASHFREE_PG_BASE}/subscriptions/{quote(sid, safe='')}",
+            headers=_pg_headers(), timeout=10,
+        )
+        if r.status_code >= 300:
+            return False
+        j = r.json()
+        if not (isinstance(j, dict) and j.get("subscription_status")):
+            return False
+        cust = j.get("customer_details") or {}
+        plan = j.get("plan_details") or {}
+        _save_mandate({
+            "subscription_id": j.get("subscription_id", sid),
+            "cf_subscription_id": j.get("cf_subscription_id"),
+            "customer_name": cust.get("customer_name"),
+            "customer_phone": cust.get("customer_phone"),
+            "customer_email": cust.get("customer_email"),
+            "plan_max_amount": plan.get("plan_max_amount") if plan.get("plan_max_amount") is not None else plan.get("plan_amount"),
+            "subscription_session_id": j.get("subscription_session_id"),
+            "status_at_creation": j.get("subscription_status"),
+            "created_at": j.get("subscription_created_at") or j.get("created_at") or datetime.now(IST).isoformat(),
+        })
+        return True
+    except Exception as e:
+        print(f"[mandates] fetch/save failed for {sid}: {e}")
+        return False
+
+
+def _extract_subscription_id(payload):
+    """Pull a subscription_id out of a Cashfree webhook payload (shape varies by event type)."""
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    for holder in (data.get("subscription_details"), data.get("subscription"), data, payload):
+        if isinstance(holder, dict) and holder.get("subscription_id"):
+            return str(holder["subscription_id"])
+    return None
+
+
+def _verify_webhook_signature(raw_body, timestamp, signature):
+    """Cashfree webhook signature = base64(HMAC-SHA256(secret, timestamp + rawBody))."""
+    if not (timestamp and signature and CASHFREE_PG_CLIENT_SECRET):
+        return False
+    try:
+        signed = (timestamp + raw_body.decode("utf-8")).encode("utf-8")
+        digest = hmac.new(CASHFREE_PG_CLIENT_SECRET.encode("utf-8"), signed, hashlib.sha256).digest()
+        return hmac.compare_digest(base64.b64encode(digest).decode("utf-8"), signature)
+    except Exception:
+        return False
+
+
+@app.post("/webhook/cashfree/subscription")
+async def cashfree_subscription_webhook(request: Request):
+    """Cashfree pushes every subscription event here (once the URL is registered in the
+    dashboard). We re-fetch the canonical record by id and upsert it, so All Mandates stays
+    current automatically. Re-fetching by id (not trusting the body) means a forged payload
+    can inject nothing — at worst it triggers a harmless authenticated lookup."""
+    raw = await request.body()
+    sig = request.headers.get("x-webhook-signature")
+    ts = request.headers.get("x-webhook-timestamp")
+    # Signature is verified for observability only — we never trust the payload body
+    # (we re-fetch canonical data by id), so a mismatch must NOT drop the event.
+    if sig:
+        ok = _verify_webhook_signature(raw, ts, sig)
+        print(f"[webhook] signature match={ok}")
+    try:
+        payload = json.loads(raw.decode("utf-8") or "{}")
+    except Exception:
+        payload = {}
+    sid = _extract_subscription_id(payload)
+    print(f"[webhook] received type={payload.get('type')} sid={sid}")
+    if sid:
+        saved = _fetch_and_save_mandate(sid)
+        print(f"[webhook] sid={sid} saved={saved}")
+    return JSONResponse(content={"status": "ok"})
+
+
+MANDATE_AUTH_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Authorize Mandate</title>
+<script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f7f4ef;color:#0f1923;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .box{background:#fff;border:1px solid #e2ddd6;border-radius:16px;box-shadow:0 2px 16px rgba(15,25,35,0.08);padding:32px;max-width:420px;width:100%;text-align:center;}
+  h2{font-size:20px;margin:0 0 8px;}
+  p{color:#4a5568;font-size:14px;margin:0 0 20px;line-height:1.5;}
+  button{background:#2563eb;color:#fff;border:0;border-radius:12px;padding:13px 20px;font-size:15px;font-weight:600;cursor:pointer;width:100%;}
+  button:hover{background:#1d4ed8;}
+  #msg{margin-top:14px;font-size:13px;color:#991b1b;min-height:18px;}
+</style>
+</head>
+<body>
+  <div class="box">
+    <h2>Authorize auto-debit mandate</h2>
+    <p>You will be taken to Cashfree's secure page to approve the eNACH mandate.</p>
+    <button id="go">Proceed to authorize</button>
+    <div id="msg"></div>
+  </div>
+<script>
+  var SID = "__SID__";
+  var MODE = "__MODE__";
+  function start(){
+    var msg = document.getElementById('msg');
+    if(!SID){ msg.textContent = 'Missing session id in the link.'; return; }
+    if(typeof Cashfree === 'undefined'){ msg.textContent = 'Payment SDK failed to load. Check your connection and retry.'; return; }
+    try {
+      var cashfree = Cashfree({ mode: MODE });
+      cashfree.subscriptionsCheckout({ subsSessionId: SID, redirectTarget: "_self" }).then(function(r){
+        if(r && r.error){ msg.textContent = (r.error.message || 'Unable to start authorization.'); }
+      });
+    } catch(e){ msg.textContent = e.message || 'Unable to start authorization.'; }
+  }
+  document.getElementById('go').addEventListener('click', start);
+  window.addEventListener('load', start);
+</script>
+</body>
+</html>"""
+
+
+@app.get("/mandate/authorize", response_class=HTMLResponse)
+async def mandate_authorize(session_id: str = Query(default="")):
+    """Public hosted page that launches Cashfree mandate authorization for a session id."""
+    sid = re.sub(r"[^A-Za-z0-9_\-]", "", session_id or "")
+    page = MANDATE_AUTH_PAGE.replace("__SID__", sid).replace("__MODE__", CASHFREE_PG_MODE)
+    return HTMLResponse(content=page)
 
 
 @app.on_event("startup")

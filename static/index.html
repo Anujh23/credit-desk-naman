@@ -844,6 +844,9 @@
       <a class="nav-item" data-page="employment-verify" onclick="showPage('employment-verify', this)">
         <i class="fa-solid fa-briefcase"></i> Employment Verification
       </a>
+      <a class="nav-item" data-page="mandate" onclick="showPage('mandate', this)">
+        <i class="fa-solid fa-file-signature"></i> Mandate
+      </a>
       <a class="nav-item" data-page="map" onclick="showPage('map', this)">
         <i class="fa-solid fa-map-location-dot"></i> Serviceable Map
       </a>
@@ -1443,6 +1446,96 @@
         <div id="emp-result" style="margin-top:16px; display:none;"></div>
       </div>
     </div>
+
+    <!-- ═══════════ PAGE: Mandate (eNACH) ═══════════ -->
+    <div class="page" id="page-mandate">
+      <div class="page-header"><h2>Mandate</h2><p>Create eNACH auto-debit mandates and track authorization status</p></div>
+
+      <!-- sub-view toggle -->
+      <div role="tablist" style="display:flex;background:#f1f5f9;padding:4px;border-radius:10px;max-width:600px;gap:4px;margin-bottom:18px;">
+        <button type="button" role="tab" id="mandate-view-send-btn" onclick="switchMandateView('send')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 12px;border:0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;background:#fff;color:#1e40af;box-shadow:0 1px 2px rgba(15,23,42,0.08);transition:all 0.15s;">
+          <i class="fa-solid fa-paper-plane"></i> Send Mandate
+        </button>
+        <button type="button" role="tab" id="mandate-view-status-btn" onclick="switchMandateView('status')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 12px;border:0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:#64748b;transition:all 0.15s;">
+          <i class="fa-solid fa-magnifying-glass-chart"></i> Mandate Status
+        </button>
+        <button type="button" role="tab" id="mandate-view-list-btn" onclick="switchMandateView('list')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 12px;border:0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:#64748b;transition:all 0.15s;">
+          <i class="fa-solid fa-list-check"></i> All Mandates
+        </button>
+      </div>
+
+      <!-- ── SEND MANDATE ── -->
+      <div id="mandate-send-view">
+        <div class="card" style="max-width:640px;">
+          <div class="card-title"><div class="icon"><i class="fa-solid fa-file-signature"></i></div> New Mandate</div>
+
+          <div class="field"><label>Customer Name</label><input type="text" id="m-name" placeholder="e.g. Ramesh Kumar" /></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="field"><label>Email</label><input type="email" id="m-email" placeholder="name@example.com" /></div>
+            <div class="field"><label>Phone</label><input type="text" id="m-phone" placeholder="10-digit mobile" maxlength="10" inputmode="numeric" /></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="field"><label>Maximum Debit Amount (&#8377;)</label><input type="number" id="m-max-amount" placeholder="e.g. 20000" min="1" /></div>
+            <div class="field"><label>Plan Name <small style="color:#aaa;text-transform:none;">(optional)</small></label><input type="text" id="m-plan-name" placeholder="Loan Repayment Mandate" /></div>
+          </div>
+
+          <div class="field"><label>Notify Customer Via</label>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;">
+              <label style="display:inline-flex;align-items:center;gap:7px;padding:8px 12px;border:1.5px solid var(--border);border-radius:10px;cursor:pointer;font-size:13px;text-transform:none;letter-spacing:normal;font-weight:500;color:var(--ink);margin:0;">
+                <input type="checkbox" class="m-notify" value="EMAIL" checked style="width:auto;padding:0;margin:0;accent-color:var(--blue);"> Email
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:7px;padding:8px 12px;border:1.5px solid var(--border);border-radius:10px;cursor:pointer;font-size:13px;text-transform:none;letter-spacing:normal;font-weight:500;color:var(--ink);margin:0;">
+                <input type="checkbox" class="m-notify" value="SMS" checked style="width:auto;padding:0;margin:0;accent-color:var(--blue);"> SMS
+              </label>
+            </div>
+            <p style="font-size:11px;color:#94a3b8;margin-top:6px;text-transform:none;">Cashfree sends the customer an authorization link on the selected channels.</p>
+          </div>
+
+          <details style="margin-bottom:14px;">
+            <summary style="font-size:12px;color:#475569;cursor:pointer;font-weight:600;">Advanced (optional)</summary>
+            <div style="margin-top:12px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+                <div class="field"><label>First Charge Date</label><input type="date" id="m-first-charge" /></div>
+                <div class="field"><label>Mandate Expiry Date</label><input type="date" id="m-expiry" /></div>
+              </div>
+              <div class="field"><label>Note</label><input type="text" id="m-note" placeholder="Internal note shown to customer" /></div>
+              <div class="field"><label>Subscription ID <small style="color:#aaa;text-transform:none;">(optional — auto-generated if blank)</small></label><input type="text" id="m-sub-id" placeholder="SUB-xxxxxxxx" /></div>
+            </div>
+          </details>
+
+          <button class="btn btn-blue" id="m-create-btn" onclick="createMandate()" style="width:100%;">
+            <i class="fa-solid fa-paper-plane btn-icon"></i> Create &amp; Send Mandate
+          </button>
+          <div id="m-create-result" style="margin-top:16px; display:none;"></div>
+        </div>
+      </div>
+
+      <!-- ── MANDATE STATUS ── -->
+      <div id="mandate-status-view" style="display:none;">
+        <div class="card" style="max-width:640px;">
+          <div class="card-title"><div class="icon"><i class="fa-solid fa-magnifying-glass-chart"></i></div> Check Mandate Status</div>
+          <div class="field"><label>Subscription ID</label><input type="text" id="m-status-id" placeholder="e.g. SUB-a1b2c3d4e5f6" /></div>
+          <button class="btn btn-blue" id="m-status-btn" onclick="checkMandateStatus()" style="width:100%;">
+            <i class="fa-solid fa-magnifying-glass btn-icon"></i> Check Status
+          </button>
+          <div id="m-status-result" style="margin-top:16px; display:none;"></div>
+        </div>
+      </div>
+
+      <!-- ── ALL MANDATES ── -->
+      <div id="mandate-list-view" style="display:none;">
+        <div class="card" style="max-width:900px;">
+          <div class="card-title"><div class="icon"><i class="fa-solid fa-list-check"></i></div> All Mandates</div>
+          <div style="position:relative;margin-bottom:14px;">
+            <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:13px;pointer-events:none;"></i>
+            <input type="text" id="m-search" placeholder="Search by name or mobile number…" oninput="onMandateSearch(this.value)" style="width:100%;padding-left:38px;" />
+          </div>
+          <div id="m-list-body"><div style="padding:16px;color:#64748b;font-size:13px;">Loading…</div></div>
+        </div>
+      </div>
+    </div>
+
 
     <!-- ═══════════ PAGE: Not Eligible Professions ═══════════ -->
     <div class="page" id="page-ineligible">
@@ -3901,6 +3994,286 @@ async function verifyEmployment() {
 document.getElementById('emp-input').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') verifyEmployment();
 });
+
+// ═══════════ Mandate (eNACH) ═══════════
+function switchMandateView(view) {
+  const active = 'background:#fff;color:#1e40af;box-shadow:0 1px 2px rgba(15,23,42,0.08);';
+  const inactive = 'background:transparent;color:#64748b;box-shadow:none;';
+  const views = { send: 'mandate-send-view', status: 'mandate-status-view', list: 'mandate-list-view' };
+  const btns = { send: 'mandate-view-send-btn', status: 'mandate-view-status-btn', list: 'mandate-view-list-btn' };
+  Object.keys(views).forEach(function(k) {
+    document.getElementById(views[k]).style.display = (k === view) ? '' : 'none';
+    const b = document.getElementById(btns[k]);
+    b.style.cssText = b.style.cssText.replace(/background:[^;]*;|color:[^;]*;|box-shadow:[^;]*;/g, '') + (k === view ? active : inactive);
+  });
+  if (view === 'list') loadMandates();
+}
+
+function mandateStatusStyle(status) {
+  const s = (status || '').toUpperCase();
+  if (s === 'ACTIVE') return { bg:'#f0fdf4', border:'#bbf7d0', color:'#065f46', icon:'fa-circle-check' };
+  if (s === 'COMPLETED') return { bg:'#f0fdf4', border:'#bbf7d0', color:'#065f46', icon:'fa-flag-checkered' };
+  if (['CANCELLED','CUSTOMER_CANCELLED','EXPIRED','LINK_EXPIRED','CARD_EXPIRED'].indexOf(s) !== -1)
+    return { bg:'#fef2f2', border:'#fecaca', color:'#991b1b', icon:'fa-circle-xmark' };
+  return { bg:'#fffbeb', border:'#fde68a', color:'#92400e', icon:'fa-clock' };  // pending states
+}
+
+async function createMandate() {
+  const name = document.getElementById('m-name').value.trim();
+  const email = document.getElementById('m-email').value.trim();
+  const phone = document.getElementById('m-phone').value.trim();
+  const resultDiv = document.getElementById('m-create-result');
+  const btn = document.getElementById('m-create-btn');
+
+  function err(msg) {
+    resultDiv.style.display = '';
+    resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"><i class="fa-solid fa-circle-xmark"></i> ' + msg + '</div>';
+  }
+
+  if (!name) return err('Enter the customer name.');
+  if (!email || email.indexOf('@') === -1) return err('Enter a valid email address.');
+  if (!/^\d{10}$/.test(phone)) return err('Phone must be 10 digits.');
+
+  const maxAmt = parseFloat(document.getElementById('m-max-amount').value);
+  if (!maxAmt || maxAmt <= 0) return err('Enter a valid maximum debit amount.');
+
+  const notify = Array.from(document.querySelectorAll('.m-notify:checked')).map(c => c.value);
+  if (!notify.length) return err('Select at least one notification channel.');
+
+  const body = {
+    customer_name: name,
+    customer_email: email,
+    customer_phone: phone,
+    plan_type: 'ON_DEMAND',
+    plan_name: document.getElementById('m-plan-name').value.trim(),
+    plan_max_amount: maxAmt,
+    payment_methods: ['enach'],
+    notification_channel: notify,
+  };
+
+  const firstCharge = document.getElementById('m-first-charge').value;
+  const expiry = document.getElementById('m-expiry').value;
+  if (firstCharge) body.subscription_first_charge_time = firstCharge + 'T10:00:00+05:30';
+  if (expiry) body.subscription_expiry_time = expiry + 'T23:59:59+05:30';
+  const note = document.getElementById('m-note').value.trim();
+  if (note) body.subscription_note = note;
+  const subId = document.getElementById('m-sub-id').value.trim();
+  if (subId) body.subscription_id = subId;
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin btn-icon"></i> Creating...';
+  resultDiv.style.display = '';
+  resultDiv.innerHTML = '<div style="padding:10px;color:#64748b;font-size:13px;">Creating mandate &amp; notifying customer...</div>';
+
+  try {
+    const res = await fetch('/api/create-subscription', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body)
+    });
+    const d = await res.json();
+
+    if (res.ok && d.subscription_id && d.subscription_status && !d.error) {
+      const st = mandateStatusStyle(d.subscription_status);
+      let html = '<div style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">';
+      html += '<div style="font-weight:700;color:#065f46;font-size:14px;margin-bottom:6px;"><i class="fa-solid fa-circle-check"></i> Mandate Created</div>';
+      html += '<div style="font-size:12px;color:#065f46;margin-bottom:10px;">Authorization link sent to the customer via ' + notify.join(' &amp; ') + '. It becomes ACTIVE once they approve.</div>';
+      html += '<table style="width:100%;font-size:13px;border-collapse:collapse;">';
+      const rows = [
+        ['Subscription ID', d.subscription_id],
+        ['Cashfree Ref', d.cf_subscription_id || '-'],
+        ['Status', '<span style="color:' + st.color + ';font-weight:700;">' + d.subscription_status + '</span>'],
+        ['Session ID', d.subscription_session_id || '-'],
+      ];
+      rows.forEach(function(r){ html += '<tr><td style="padding:4px 0;color:#475569;font-weight:600;width:130px;vertical-align:top;">' + r[0] + '</td><td style="padding:4px 0;color:#1e293b;font-weight:700;word-break:break-all;">' + r[1] + '</td></tr>'; });
+      html += '</table>';
+      const authUrl = d.subscription_session_id ? (window.location.origin + '/mandate/authorize?session_id=' + encodeURIComponent(d.subscription_session_id)) : '';
+      if (authUrl) {
+        html += '<div style="margin-top:14px;padding:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;">';
+        html += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:#1e40af;margin-bottom:8px;">Mandate Authorization Link</div>';
+        html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+        html += '<input type="text" id="m-auth-url" readonly value="' + authUrl + '" onclick="this.select()" style="flex:1;min-width:240px;font-size:12px;padding:8px 10px;background:#fff;" />';
+        html += '<button class="btn btn-blue" onclick="copyMandateUrl(this)" style="width:auto;margin:0;padding:9px 12px;font-size:12px;"><i class="fa-solid fa-copy"></i> Copy</button>';
+        html += '<a href="' + authUrl + '" target="_blank" rel="noopener" class="btn btn-green" style="width:auto;margin:0;padding:9px 12px;font-size:12px;text-decoration:none;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open</a>';
+        html += '</div>';
+        html += '<p style="font-size:11px;color:#64748b;margin-top:8px;text-transform:none;">Share with the customer to approve the mandate (also sent via ' + notify.join(' &amp; ') + ').</p>';
+        html += '</div>';
+      }
+      html += '<div style="margin-top:12px;"><button class="btn btn-blue" onclick="prefillStatusCheck(\'' + encodeURIComponent(d.subscription_id) + '\')" style="width:auto;padding:8px 14px;margin:0;font-size:12px;"><i class="fa-solid fa-magnifying-glass-chart"></i> Track this mandate</button></div>';
+      html += '</div>';
+      resultDiv.innerHTML = html;
+    } else {
+      const msg = d.message || d.error || ('Failed to create mandate' + (d.subscription_status ? ' (status: ' + d.subscription_status + ')' : ''));
+      resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"><i class="fa-solid fa-circle-xmark"></i> ' + msg + '</div>';
+    }
+  } catch(e) {
+    resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;">Error: ' + e.message + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-paper-plane btn-icon"></i> Create &amp; Send Mandate';
+  }
+}
+
+function prefillStatusCheck(encodedId) {
+  switchMandateView('status');
+  document.getElementById('m-status-id').value = decodeURIComponent(encodedId);
+  checkMandateStatus();
+}
+
+function copyMandateUrl(btn) {
+  const el = document.getElementById('m-auth-url');
+  if (!el) return;
+  const done = function(){ const old = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied'; setTimeout(function(){ btn.innerHTML = old; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(el.value).then(done).catch(function(){ el.select(); document.execCommand('copy'); done(); });
+  } else {
+    el.select(); document.execCommand('copy'); done();
+  }
+}
+
+// ── All Mandates list ──
+let mandatesCache = [];
+let mandateFilter = 'all';
+let mandateSearch = '';
+
+function onMandateSearch(v) { mandateSearch = (v || '').trim().toLowerCase(); renderMandates(); }
+
+function mandateBucket(status) {
+  const s = (status || '').toUpperCase();
+  if (s === 'ACTIVE') return 'ongoing';
+  if (['INITIALIZED', 'BANK_APPROVAL_PENDING', 'ON_HOLD'].indexOf(s) !== -1) return 'pending';
+  return 'past';  // COMPLETED, CANCELLED, EXPIRED, LINK_EXPIRED, CARD_EXPIRED, etc.
+}
+
+async function loadMandates() {
+  const body = document.getElementById('m-list-body');
+  body.innerHTML = '<div style="padding:16px;color:#64748b;font-size:13px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading mandates &amp; refreshing live status…</div>';
+  try {
+    const res = await fetch('/api/list-mandates', { headers: authHeaders() });
+    const d = await res.json();
+    mandatesCache = d.mandates || [];
+    renderMandates();
+  } catch(e) {
+    body.innerHTML = '<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;">Error: ' + e.message + '</div>';
+  }
+}
+
+function setMandateFilter(f) { mandateFilter = f; renderMandates(); }
+
+function renderMandates() {
+  const body = document.getElementById('m-list-body');
+  if (!mandatesCache.length) {
+    body.innerHTML = '<div style="padding:24px 16px;color:#64748b;font-size:13px;text-align:center;">No mandates recorded yet. Every mandate you create from <b>Send Mandate</b> — and every one Cashfree reports via webhook — appears here automatically.</div>';
+    return;
+  }
+  const searched = mandatesCache.filter(function(m){
+    if (!mandateSearch) return true;
+    const hay = ((m.customer_name || '') + ' ' + (m.customer_phone || '') + ' ' + (m.subscription_id || '')).toLowerCase();
+    return hay.indexOf(mandateSearch) !== -1;
+  });
+
+  const counts = { all: searched.length, ongoing: 0, pending: 0, past: 0 };
+  searched.forEach(function(m){ counts[mandateBucket(m.status)]++; });
+
+  let html = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">';
+  [['all','All'],['ongoing','Ongoing'],['pending','Pending'],['past','Past']].forEach(function(c){
+    const on = mandateFilter === c[0];
+    html += '<button onclick="setMandateFilter(\'' + c[0] + '\')" style="padding:6px 12px;border-radius:20px;border:1.5px solid ' + (on ? '#2563eb' : 'var(--border)') + ';background:' + (on ? '#2563eb' : '#fff') + ';color:' + (on ? '#fff' : '#475569') + ';font-size:12px;font-weight:600;cursor:pointer;">' + c[1] + ' (' + counts[c[0]] + ')</button>';
+  });
+  html += '<button onclick="loadMandates()" style="margin-left:auto;padding:6px 12px;border-radius:8px;border:1.5px solid var(--border);background:#fff;color:#475569;font-size:12px;font-weight:600;cursor:pointer;"><i class="fa-solid fa-rotate"></i> Refresh</button>';
+  html += '</div>';
+
+  const rows = searched.filter(function(m){ return mandateFilter === 'all' || mandateBucket(m.status) === mandateFilter; });
+  if (!rows.length) {
+    const emptyMsg = mandateSearch ? ('No mandates match “' + mandateSearch + '”.') : ('No ' + mandateFilter + ' mandates.');
+    body.innerHTML = html + '<div style="padding:24px 16px;color:#64748b;font-size:13px;text-align:center;">' + emptyMsg + '</div>';
+    return;
+  }
+
+  html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">';
+  html += '<tr style="text-align:left;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;"><th style="padding:8px 6px;">Customer</th><th style="padding:8px 6px;">Max Amount</th><th style="padding:8px 6px;">Status</th><th style="padding:8px 6px;">Created</th><th style="padding:8px 6px;"></th></tr>';
+  rows.forEach(function(m){
+    const st = mandateStatusStyle(m.status);
+    const amt = (m.plan_max_amount !== null && m.plan_max_amount !== undefined) ? '₹' + Number(m.plan_max_amount).toLocaleString('en-IN') : '—';
+    let created = '—';
+    if (m.created_at) { const dt = new Date(m.created_at); if (!isNaN(dt)) created = dt.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }); }
+    html += '<tr style="border-top:1px solid var(--border);">';
+    html += '<td style="padding:10px 6px;"><div style="font-weight:700;color:#1e293b;">' + (m.customer_name || '—') + '</div><div style="font-size:11px;color:#94a3b8;">' + (m.customer_phone || '') + ' · ' + (m.subscription_id || '') + '</div></td>';
+    html += '<td style="padding:10px 6px;font-weight:600;">' + amt + '</td>';
+    html += '<td style="padding:10px 6px;"><span style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;background:' + st.bg + ';border:1px solid ' + st.border + ';color:' + st.color + ';font-size:11px;font-weight:700;white-space:nowrap;"><i class="fa-solid ' + st.icon + '"></i> ' + (m.status || 'UNKNOWN') + '</span></td>';
+    html += '<td style="padding:10px 6px;color:#64748b;white-space:nowrap;">' + created + '</td>';
+    html += '<td style="padding:10px 6px;text-align:right;"><button onclick="prefillStatusCheck(\'' + encodeURIComponent(m.subscription_id) + '\')" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--border);background:#fff;color:#2563eb;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;"><i class="fa-solid fa-magnifying-glass-chart"></i> Track</button></td>';
+    html += '</tr>';
+  });
+  html += '</table></div>';
+  body.innerHTML = html;
+}
+
+async function checkMandateStatus() {
+  const id = document.getElementById('m-status-id').value.trim();
+  const resultDiv = document.getElementById('m-status-result');
+  const btn = document.getElementById('m-status-btn');
+  if (!id) {
+    resultDiv.style.display = '';
+    resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;">Enter a subscription ID.</div>';
+    return;
+  }
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin btn-icon"></i> Checking...';
+  resultDiv.style.display = '';
+  resultDiv.innerHTML = '<div style="padding:10px;color:#64748b;font-size:13px;">Fetching mandate status...</div>';
+  try {
+    const res = await fetch('/api/subscription-status', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ subscription_id: id })
+    });
+    const d = await res.json();
+    if (res.ok && d.subscription_status) {
+      const st = mandateStatusStyle(d.subscription_status);
+      const cust = d.customer_details || {};
+      const plan = d.plan_details || {};
+      const authDet = d.authorisation_details || d.authorization_details || {};
+      const fmtAmt = function(n){ return '₹' + Number(n).toLocaleString('en-IN'); };
+      const dash = function(v){ return (v===null||v===undefined||v==='') ? '<span style="color:#94a3b8;">—</span>' : v; };
+      let html = '<div style="padding:14px;background:' + st.bg + ';border:1px solid ' + st.border + ';border-radius:8px;">';
+      html += '<div style="margin-bottom:12px;"><span style="font-weight:700;color:' + st.color + ';font-size:15px;"><i class="fa-solid ' + st.icon + '"></i> ' + d.subscription_status + '</span></div>';
+      html += '<table style="width:100%;font-size:13px;border-collapse:collapse;">';
+      const rows = [
+        ['Subscription ID', d.subscription_id || id],
+        ['Cashfree Ref', d.cf_subscription_id],
+        ['Customer', cust.customer_name],
+        ['Phone', cust.customer_phone],
+        ['Email', cust.customer_email],
+        ['Plan Type', plan.plan_type],
+        ['Max Amount', (plan.plan_max_amount != null) ? fmtAmt(plan.plan_max_amount) : null],
+        ['Amount / Cycle', (plan.plan_amount != null) ? fmtAmt(plan.plan_amount) : null],
+        ['Auth Status', authDet.authorization_status],
+        ['First Charge', d.subscription_first_charge_time],
+        ['Expiry', d.subscription_expiry_time],
+      ];
+      rows.forEach(function(r){
+        if (r[1] === null || r[1] === undefined) return;
+        html += '<tr><td style="padding:5px 0;color:#475569;font-weight:600;width:140px;vertical-align:top;">' + r[0] + '</td><td style="padding:5px 0;color:#1e293b;font-weight:700;word-break:break-word;">' + dash(r[1]) + '</td></tr>';
+      });
+      html += '</table>';
+      html += '<div style="margin-top:12px;"><button class="btn btn-blue" onclick="checkMandateStatus()" style="width:auto;padding:8px 14px;margin:0;font-size:12px;"><i class="fa-solid fa-rotate"></i> Refresh</button></div>';
+      html += '</div>';
+      resultDiv.innerHTML = html;
+    } else {
+      const msg = d.message || d.error || 'Mandate not found';
+      resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"><i class="fa-solid fa-circle-xmark"></i> ' + msg + '</div>';
+    }
+  } catch(e) {
+    resultDiv.innerHTML = '<div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;">Error: ' + e.message + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-magnifying-glass btn-icon"></i> Check Status';
+  }
+}
+
+document.getElementById('m-phone').addEventListener('input', function(e) { e.target.value = e.target.value.replace(/\D/g, ''); });
+document.getElementById('m-status-id').addEventListener('keydown', function(e) { if (e.key === 'Enter') checkMandateStatus(); });
 </script>
 
 <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
